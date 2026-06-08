@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 // ════════════════════════════════════════════
 //  CONFIG
 // ════════════════════════════════════════════
-const API_URL = "https://splitsmart-backend-4p9e.onrender.com/api";
+const API_URL = "http://localhost:3000/api";
 const COLORS = [
   "#FF6B6B",
   "#FFD93D",
