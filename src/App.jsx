@@ -582,7 +582,7 @@ function LoginScreen({ onLogin }) {
     setLoading(true);
     try {
       const result = await apiFetch("POST", "/auth/login", { email, password });
-      onLogin(result.token, result.email, result.role, result.groupId);
+      onLogin(result.token, result.email);
     } catch (e) {
       setErrMsg(e.message);
     } finally {
@@ -691,20 +691,32 @@ function LoginScreen({ onLogin }) {
 }
 
 // ════════════════════════════════════════════
-//  GROUP SELECTOR (admin only)
+//  GROUP SELECTOR
 // ════════════════════════════════════════════
 function GroupSelectorScreen({ token, onSelectGroup }) {
   const [light, toggleTheme] = useTheme();
   const [groups, setGroups] = useState([]);
   const [newName, setNewName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
   const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [err, setErr] = useState("");
+  const [joinErr, setJoinErr] = useState("");
 
-  useEffect(() => {
+  function reload() {
     apiFetch("GET", "/groups", null, token)
       .then((d) => setGroups(d.groups || []))
       .catch((e) => setErr(e.message));
+  }
+
+  useEffect(() => {
+    reload();
   }, [token]);
+
+  const ownGroups = groups.filter(
+    (g) => g.role === "owner" || g.role === "coadmin",
+  );
+  const invitedGroups = groups.filter((g) => g.role === "viewer");
 
   async function createGroup() {
     if (!newName.trim()) return;
@@ -717,15 +729,40 @@ function GroupSelectorScreen({ token, onSelectGroup }) {
         { name: newName.trim() },
         token,
       );
-      setGroups((prev) => [...prev, group]);
       setNewName("");
-      onSelectGroup(group.id, group.name, true);
+      reload();
+      onSelectGroup(group.id, group.name, group.role, true);
     } catch (e) {
       setErr(e.message);
     } finally {
       setCreating(false);
     }
   }
+
+  async function joinGroup() {
+    if (!joinCode.trim()) return;
+    setJoining(true);
+    setJoinErr("");
+    try {
+      const res = await apiFetch(
+        "POST",
+        "/groups/join",
+        { code: joinCode.trim() },
+        token,
+      );
+      setJoinCode("");
+      reload();
+    } catch (e) {
+      setJoinErr(e.message);
+    } finally {
+      setJoining(false);
+    }
+  }
+
+  const roleIcon = (role) =>
+    role === "owner" ? "👑" : role === "coadmin" ? "🔧" : "👁";
+  const roleLabel = (role) =>
+    role === "owner" ? "Owner" : role === "coadmin" ? "Co-admin" : "Viewer";
 
   return (
     <div className="screen">
@@ -743,26 +780,86 @@ function GroupSelectorScreen({ token, onSelectGroup }) {
         <div className="logo-wrap">
           <div className="logo-icon">👥</div>
           <h1 className="logo-title">Your Groups</h1>
-          <p className="logo-sub">Select a group or create a new one</p>
+          <p className="logo-sub">Manage or join groups</p>
         </div>
         <div className="setup-card">
-          {groups.length > 0 && (
+          {/* Own / co-admin groups */}
+          {ownGroups.length > 0 && (
             <>
-              <h2>Existing Groups</h2>
-              {groups.map((g) => (
+              <h2>My Groups</h2>
+              {ownGroups.map((g) => (
                 <div
                   key={g.id}
                   className="group-card"
-                  onClick={() => onSelectGroup(g.id, g.name, false)}
+                  onClick={() => onSelectGroup(g.id, g.name, g.role, false)}
                 >
-                  <span className="group-icon">👥</span>
-                  <span className="group-name">{g.name}</span>
+                  <span className="group-icon">{roleIcon(g.role)}</span>
+                  <div style={{ flex: 1 }}>
+                    <div className="group-name">{g.name}</div>
+                    {g.joinCode && (
+                      <div className="group-meta" style={{ marginTop: 2 }}>
+                        Code:{" "}
+                        <span
+                          style={{
+                            fontFamily: "monospace",
+                            color: "var(--accent)",
+                            letterSpacing: 2,
+                          }}
+                        >
+                          {g.joinCode}
+                        </span>
+                        <span style={{ marginLeft: 6, color: "var(--muted)" }}>
+                          · Share to invite
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="group-meta">{roleLabel(g.role)} →</span>
+                </div>
+              ))}
+              <hr className="divider" />
+            </>
+          )}
+
+          {/* Invited (viewer) groups */}
+          {invitedGroups.length > 0 && (
+            <>
+              <h2 style={{ marginBottom: "0.75rem" }}>
+                Invited Groups
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "var(--muted)",
+                    fontWeight: 400,
+                    marginLeft: 8,
+                  }}
+                >
+                  — view only
+                </span>
+              </h2>
+              {invitedGroups.map((g) => (
+                <div
+                  key={g.id}
+                  className="group-card"
+                  onClick={() => onSelectGroup(g.id, g.name, g.role, false)}
+                  style={{
+                    borderColor: "rgba(155,127,255,0.25)",
+                    background: "var(--purple-dim)",
+                  }}
+                >
+                  <span className="group-icon">👁</span>
+                  <div style={{ flex: 1 }}>
+                    <div className="group-name">{g.name}</div>
+                    <div className="group-meta">Viewer access</div>
+                  </div>
                   <span className="group-meta">→</span>
                 </div>
               ))}
               <hr className="divider" />
             </>
           )}
+
+          {/* Create new group */}
           <h2>Create New Group</h2>
           <div className="new-group-row">
             <input
@@ -783,6 +880,46 @@ function GroupSelectorScreen({ token, onSelectGroup }) {
           {err && (
             <div className="login-err" style={{ marginTop: "8px" }}>
               {err}
+            </div>
+          )}
+
+          <hr className="divider" />
+
+          {/* Join by code */}
+          <h2>Join via Code</h2>
+          <p
+            style={{
+              fontSize: "0.83rem",
+              color: "var(--muted)",
+              marginBottom: "10px",
+            }}
+          >
+            Got a 6-letter code from a group admin? Enter it below.
+          </p>
+          <div className="new-group-row">
+            <input
+              className="inp"
+              placeholder="e.g. A3F9C2"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === "Enter" && joinGroup()}
+              style={{
+                fontFamily: "monospace",
+                letterSpacing: 3,
+                textTransform: "uppercase",
+              }}
+            />
+            <button
+              className="btn"
+              onClick={joinGroup}
+              disabled={joining || !joinCode.trim()}
+            >
+              {joining ? "..." : "Join"}
+            </button>
+          </div>
+          {joinErr && (
+            <div className="login-err" style={{ marginTop: "8px" }}>
+              {joinErr}
             </div>
           )}
         </div>
@@ -1289,7 +1426,7 @@ function ExpensesTab({ expenses, members, token, setExpenses, isViewer }) {
   async function deleteExpense(expId) {
     if (!window.confirm("Delete this expense?")) return;
     try {
-      await apiFetch("DELETE", "/expenses/" + expId, null, token);
+      await apiFetch("DELETE", "/expenses/one/" + expId, null, token);
       setExpenses((prev) => prev.filter((e) => e.id !== expId));
     } catch (e) {
       alert("Failed to delete expense: " + e.message);
@@ -1605,41 +1742,31 @@ function MembersTab({
   setMembers,
   token,
   groupId,
-  admins,
-  setAdmins,
-  currentAdminEmail,
-  isViewer,
+  myRole, // "owner" | "coadmin" | "viewer"
+  joinCode,
+  currentEmail,
   expenses,
   payments,
 }) {
+  const isViewer = myRole === "viewer";
+  const isOwner = myRole === "owner";
+
   const [addInput, setAddInput] = useState("");
-  const [adminInput, setAdminInput] = useState("");
-  const [adminPass, setAdminPass] = useState("");
-  const [adminErr, setAdminErr] = useState("");
-  const [adminOk, setAdminOk] = useState("");
-  const [addingAdmin, setAddingAdmin] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteErr, setInviteErr] = useState("");
+  const [inviteOk, setInviteOk] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [groupUsers, setGroupUsers] = useState([]); // { userId, email, role }
 
-  const [viewerEmail, setViewerEmail] = useState("");
-  const [viewerPass, setViewerPass] = useState("");
-  const [viewerErr, setViewerErr] = useState("");
-  const [viewerOk, setViewerOk] = useState("");
-  const [addingViewer, setAddingViewer] = useState(false);
-  const [viewers, setViewers] = useState([]);
-
-  // Promote member to admin
-  const [promoteModal, setPromoteModal] = useState(null); // { memberId, memberName }
-  const [promoteEmail, setPromoteEmail] = useState("");
-  const [promotePass, setPromotePass] = useState("");
-  const [promoteErr, setPromoteErr] = useState("");
-  const [promoting, setPromoting] = useState(false);
+  function reloadGroupUsers() {
+    apiFetch("GET", "/groups/" + groupId + "/members", null, token)
+      .then((d) => setGroupUsers(d.members || []))
+      .catch(() => {});
+  }
 
   useEffect(() => {
-    if (!isViewer) {
-      apiFetch("GET", "/viewers/" + groupId, null, token)
-        .then((d) => setViewers(d.viewers || []))
-        .catch(() => {});
-    }
-  }, [groupId, token, isViewer]);
+    reloadGroupUsers();
+  }, [groupId, token]);
 
   async function addMember() {
     const name = addInput.trim();
@@ -1660,25 +1787,21 @@ function MembersTab({
   }
 
   async function removeMember(id) {
-    // Block removal if member is involved in any expense
     const hasPendingExpense = expenses.some(
       (e) => e.payers.includes(id) || e.splitAmong.includes(id),
     );
     if (hasPendingExpense) {
       alert(
-        "Cannot remove this member — they are involved in one or more expenses. Delete those expenses first.",
+        "Cannot remove — member is in an expense. Delete those expenses first.",
       );
       return;
     }
-    // Also block if member has unsettled balance
     const bal = calcBalances(members, expenses, payments);
     if (bal[id] !== undefined && Math.abs(bal[id]) > 0.01) {
-      alert(
-        "Cannot remove this member — they have an unsettled balance. Settle up first.",
-      );
+      alert("Cannot remove — member has an unsettled balance.");
       return;
     }
-    if (!window.confirm("Remove this member from the group?")) return;
+    if (!window.confirm("Remove this member?")) return;
     try {
       await apiFetch("DELETE", "/members/" + id, null, token);
       setMembers((prev) => prev.filter((m) => m.id !== id));
@@ -1687,124 +1810,69 @@ function MembersTab({
     }
   }
 
-  async function addAdmin() {
-    setAdminErr("");
-    setAdminOk("");
-    if (!adminInput || !adminPass) {
-      setAdminErr("Email and password are required.");
+  async function inviteByEmail() {
+    setInviteErr("");
+    setInviteOk("");
+    if (!inviteEmail.trim()) {
+      setInviteErr("Enter an email.");
       return;
     }
-    const pwErr = validatePassword(adminPass);
-    if (pwErr) {
-      setAdminErr(pwErr);
-      return;
-    }
-    setAddingAdmin(true);
+    setInviting(true);
     try {
       await apiFetch(
         "POST",
-        "/auth/register",
-        { email: adminInput, password: adminPass },
+        "/groups/" + groupId + "/invite",
+        { email: inviteEmail.trim() },
         token,
       );
-      const fresh = await apiFetch("GET", "/admins", null, token);
-      setAdmins(fresh.admins || []);
-      setAdminInput("");
-      setAdminPass("");
-      setAdminOk("Admin added successfully!");
+      setInviteEmail("");
+      setInviteOk("Invited! They'll see this group next time they log in.");
+      reloadGroupUsers();
     } catch (e) {
-      setAdminErr(e.message);
+      setInviteErr(e.message);
     } finally {
-      setAddingAdmin(false);
+      setInviting(false);
     }
   }
 
-  async function removeAdmin(id) {
-    if (!window.confirm("Remove this admin account?")) return;
-    try {
-      await apiFetch("DELETE", "/admins/" + id, null, token);
-      const fresh = await apiFetch("GET", "/admins", null, token);
-      setAdmins(fresh.admins || []);
-    } catch (e) {
-      alert("Failed to remove admin: " + e.message);
-    }
-  }
-
-  async function addViewer() {
-    setViewerErr("");
-    setViewerOk("");
-    if (!viewerEmail || !viewerPass) {
-      setViewerErr("Email and password are required.");
-      return;
-    }
-    const pwErr = validatePassword(viewerPass);
-    if (pwErr) {
-      setViewerErr(pwErr);
-      return;
-    }
-    setAddingViewer(true);
+  async function changeRole(userId, newRole) {
     try {
       await apiFetch(
-        "POST",
-        "/auth/register-viewer",
-        { email: viewerEmail, password: viewerPass, groupId },
+        "PATCH",
+        "/groups/" + groupId + "/members/" + userId + "/role",
+        { role: newRole },
         token,
       );
-      const fresh = await apiFetch("GET", "/viewers/" + groupId, null, token);
-      setViewers(fresh.viewers || []);
-      setViewerEmail("");
-      setViewerPass("");
-      setViewerOk("Viewer added! They can now log in and view this group.");
+      reloadGroupUsers();
     } catch (e) {
-      setViewerErr(e.message);
-    } finally {
-      setAddingViewer(false);
+      alert("Failed to change role: " + e.message);
     }
   }
 
-  async function removeViewer(id) {
-    if (!window.confirm("Remove this viewer account?")) return;
-    try {
-      await apiFetch("DELETE", "/viewers/" + id, null, token);
-      const fresh = await apiFetch("GET", "/viewers/" + groupId, null, token);
-      setViewers(fresh.viewers || []);
-    } catch (e) {
-      alert("Failed to remove viewer: " + e.message);
-    }
-  }
-
-  async function promoteToAdmin() {
-    setPromoteErr("");
-    if (!promoteEmail || !promotePass) {
-      setPromoteErr("Email and password are required.");
-      return;
-    }
-    const pwErr = validatePassword(promotePass);
-    if (pwErr) { setPromoteErr(pwErr); return; }
-    setPromoting(true);
+  async function removeGroupUser(userId) {
+    if (!window.confirm("Remove this person's access to the group?")) return;
     try {
       await apiFetch(
-        "POST",
-        "/members/" + promoteModal.memberId + "/promote",
-        { email: promoteEmail, password: promotePass },
+        "DELETE",
+        "/groups/" + groupId + "/members/" + userId,
+        null,
         token,
       );
-      const fresh = await apiFetch("GET", "/admins", null, token);
-      setAdmins(fresh.admins || []);
-      setPromoteModal(null);
-      setPromoteEmail("");
-      setPromotePass("");
+      reloadGroupUsers();
     } catch (e) {
-      setPromoteErr(e.message);
-    } finally {
-      setPromoting(false);
+      alert("Failed to remove: " + e.message);
     }
   }
+
+  const roleIcon = (r) =>
+    r === "owner" ? "👑" : r === "coadmin" ? "🔧" : "👁";
+  const roleLabel = (r) =>
+    r === "owner" ? "Owner" : r === "coadmin" ? "Co-admin" : "Viewer";
 
   return (
     <div>
-      {/* Group Members */}
-      <h3 className="section-label">Group Members</h3>
+      {/* Expense Members */}
+      <h3 className="section-label">Expense Members</h3>
       {members.map((m) => (
         <div key={m.id} className="member-row">
           <div
@@ -1822,82 +1890,20 @@ function MembersTab({
           </div>
           <span className="m-name">{m.name}</span>
           {!isViewer && (
-            <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-              <button
-                className="btn-outline"
-                style={{ padding: "5px 10px", fontSize: "0.75rem", borderRadius: "8px" }}
-                onClick={() => {
-                  setPromoteModal({ memberId: m.id, memberName: m.name });
-                  setPromoteEmail("");
-                  setPromotePass("");
-                  setPromoteErr("");
-                }}
-                title="Give this member admin access"
-              >
-                ⬆ Admin
-              </button>
-              <button
-                className="btn-remove-member"
-                onClick={() => removeMember(m.id)}
-              >
-                ✕ Remove
-              </button>
-            </div>
+            <button
+              className="btn-remove-member"
+              onClick={() => removeMember(m.id)}
+            >
+              ✕ Remove
+            </button>
           )}
         </div>
       ))}
-
-      {/* Promote to Admin Modal */}
-      {promoteModal && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setPromoteModal(null)}>
-          <div className="modal" style={{ borderRadius: "20px" }}>
-            <div className="modal-header">
-              <div className="modal-title">Promote {promoteModal.memberName} to Admin</div>
-              <button className="close-btn" onClick={() => setPromoteModal(null)}>✕</button>
-            </div>
-            <p style={{ color: "var(--muted)", fontSize: "0.88rem", marginBottom: "1.25rem", lineHeight: 1.5 }}>
-              Create admin credentials for <strong style={{ color: "var(--text)" }}>{promoteModal.memberName}</strong>.
-              They will be able to log in and manage all groups.
-            </p>
-            <div className="form-group">
-              <label className="form-label">Admin Email</label>
-              <input
-                className="inp"
-                type="email"
-                placeholder="their@email.com"
-                value={promoteEmail}
-                onChange={(e) => setPromoteEmail(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <input
-                className="inp"
-                type="password"
-                placeholder="8+ chars, uppercase, number, special"
-                value={promotePass}
-                onChange={(e) => setPromotePass(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && promoteToAdmin()}
-              />
-              <p className="pw-hint">Min 8 chars · 1 uppercase · 1 number · 1 special character</p>
-            </div>
-            {promoteErr && <div className="login-err">{promoteErr}</div>}
-            <div style={{ display: "flex", gap: "10px", marginTop: "0.5rem" }}>
-              <button className="btn-outline" onClick={() => setPromoteModal(null)} style={{ flex: 1 }}>Cancel</button>
-              <button className="btn" onClick={promoteToAdmin} disabled={promoting} style={{ flex: 2 }}>
-                {promoting ? "Promoting..." : `⬆ Make ${promoteModal.memberName} an Admin`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add member (admin only) */}
       {!isViewer && (
         <div className="input-row" style={{ marginTop: "12px" }}>
           <input
             className="inp"
-            placeholder="Add a new member..."
+            placeholder="Add expense member..."
             maxLength={20}
             value={addInput}
             onChange={(e) => setAddInput(e.target.value)}
@@ -1909,128 +1915,152 @@ function MembersTab({
         </div>
       )}
 
-      {/* Viewers (admin only) */}
-      {!isViewer && (
-        <div className="admin-section">
-          <h2>
-            👁 Viewer Accounts{" "}
-            <span
-              style={{
-                fontSize: "0.75rem",
-                color: "var(--muted)",
-                fontWeight: 400,
-              }}
-            >
-              — read-only access to this group
-            </span>
-          </h2>
-          {viewers.length > 0 && (
-            <div className="admin-list">
-              {viewers.map((v) => (
-                <div key={v.id} className="admin-item">
-                  <span style={{ fontSize: "16px" }}>👁</span>
-                  <span className="admin-email">{v.email}</span>
-                  <button
-                    className="btn-remove-admin"
-                    onClick={() => removeViewer(v.id)}
-                  >
-                    ✕ Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <input
-              className="inp"
-              type="email"
-              placeholder="Viewer email"
-              value={viewerEmail}
-              onChange={(e) => setViewerEmail(e.target.value)}
-            />
-          </div>
-          <div className="input-row">
-            <input
-              className="inp"
-              type="password"
-              placeholder="Password (8+ chars, 1 uppercase, 1 number, 1 special)"
-              value={viewerPass}
-              onChange={(e) => setViewerPass(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addViewer()}
-            />
-            <button className="btn" onClick={addViewer} disabled={addingViewer}>
-              {addingViewer ? "..." : "Add"}
-            </button>
-          </div>
-          {viewerErr && (
-            <div className="login-err" style={{ marginTop: "8px" }}>
-              {viewerErr}
-            </div>
-          )}
-          {viewerOk && (
-            <div className="login-success" style={{ marginTop: "8px" }}>
-              {viewerOk}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Admin Management (admin only) */}
-      {!isViewer && (
-        <div className="admin-section">
-          <h2>Admin Accounts</h2>
+      {/* Who has access to this group */}
+      <div className="admin-section">
+        <h2>Group Access</h2>
+        {groupUsers.length > 0 && (
           <div className="admin-list">
-            {admins.map((a) => (
-              <div key={a.id} className="admin-item">
-                <span style={{ fontSize: "16px" }}>🔐</span>
-                <span className="admin-email">{a.email}</span>
-                {a.email === currentAdminEmail ? (
+            {groupUsers.map((u) => (
+              <div key={u.userId} className="admin-item">
+                <span style={{ fontSize: "16px" }}>{roleIcon(u.role)}</span>
+                <span className="admin-email">{u.email}</span>
+                {u.email === currentEmail ? (
                   <span className="admin-you">You</span>
+                ) : isOwner ? (
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {u.role === "viewer" && (
+                      <button
+                        className="btn-outline"
+                        style={{
+                          padding: "4px 10px",
+                          fontSize: "0.75rem",
+                          borderRadius: "8px",
+                        }}
+                        onClick={() => changeRole(u.userId, "coadmin")}
+                      >
+                        ⬆ Co-admin
+                      </button>
+                    )}
+                    {u.role === "coadmin" && (
+                      <button
+                        className="btn-outline"
+                        style={{
+                          padding: "4px 10px",
+                          fontSize: "0.75rem",
+                          borderRadius: "8px",
+                        }}
+                        onClick={() => changeRole(u.userId, "viewer")}
+                      >
+                        ⬇ Viewer
+                      </button>
+                    )}
+                    <button
+                      className="btn-remove-admin"
+                      onClick={() => removeGroupUser(u.userId)}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 ) : (
-                  <button
-                    className="btn-remove-admin"
-                    onClick={() => removeAdmin(a.id)}
-                  >
-                    ✕ Remove
-                  </button>
+                  <span style={{ fontSize: "0.78rem", color: "var(--muted)" }}>
+                    {roleLabel(u.role)}
+                  </span>
                 )}
               </div>
             ))}
           </div>
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <input
-              className="inp"
-              type="email"
-              placeholder="New admin email"
-              value={adminInput}
-              onChange={(e) => setAdminInput(e.target.value)}
-            />
-          </div>
-          <div className="input-row">
-            <input
-              className="inp"
-              type="password"
-              placeholder="Password (8+ chars, 1 uppercase, 1 number, 1 special)"
-              value={adminPass}
-              onChange={(e) => setAdminPass(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addAdmin()}
-            />
-            <button className="btn" onClick={addAdmin} disabled={addingAdmin}>
-              {addingAdmin ? "..." : "Add"}
-            </button>
-          </div>
-          {adminErr && (
-            <div className="login-err" style={{ marginTop: "8px" }}>
-              {adminErr}
+        )}
+
+        {/* Invite by email */}
+        {!isViewer && (
+          <>
+            <h2 style={{ marginTop: "1.25rem" }}>
+              Invite by Email
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--muted)",
+                  fontWeight: 400,
+                  marginLeft: 8,
+                }}
+              >
+                — they must have a SplitSmart account
+              </span>
+            </h2>
+            <div className="input-row">
+              <input
+                className="inp"
+                type="email"
+                placeholder="friend@email.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && inviteByEmail()}
+              />
+              <button
+                className="btn"
+                onClick={inviteByEmail}
+                disabled={inviting}
+              >
+                {inviting ? "..." : "Invite"}
+              </button>
             </div>
-          )}
-          {adminOk && (
-            <div className="login-success" style={{ marginTop: "8px" }}>
-              {adminOk}
+            {inviteErr && (
+              <div className="login-err" style={{ marginTop: "8px" }}>
+                {inviteErr}
+              </div>
+            )}
+            {inviteOk && (
+              <div className="login-success" style={{ marginTop: "8px" }}>
+                {inviteOk}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Join code display */}
+        {joinCode && !isViewer && (
+          <div
+            style={{
+              marginTop: "1.25rem",
+              background: "var(--card)",
+              border: "1px solid var(--border2)",
+              borderRadius: "12px",
+              padding: "14px 16px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--muted)",
+                marginBottom: 6,
+              }}
+            >
+              Or share this join code:
             </div>
-          )}
-        </div>
-      )}
+            <div
+              style={{
+                fontFamily: "monospace",
+                fontSize: "1.6rem",
+                letterSpacing: 6,
+                color: "var(--accent)",
+                fontWeight: 700,
+              }}
+            >
+              {joinCode}
+            </div>
+            <div
+              style={{
+                fontSize: "0.78rem",
+                color: "var(--muted)",
+                marginTop: 6,
+              }}
+            >
+              Anyone with a SplitSmart account can enter this on the Groups
+              screen to join as a viewer.
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2050,8 +2080,8 @@ function AppScreen({
   groupName,
   onDissolve,
   onSwitchGroup,
-  admins,
-  setAdmins,
+  myRole,
+  joinCode,
   currentAdminEmail,
   isViewer,
 }) {
@@ -2087,15 +2117,13 @@ function AppScreen({
             <div className="sm">total expenses</div>
           </div>
           <ThemeToggle light={light} onToggle={toggleTheme} />
-          {!isViewer && (
-            <>
-              <button className="btn-switch-group" onClick={onSwitchGroup}>
-                ⇄ Groups
-              </button>
-              <button className="btn-dissolve" onClick={onDissolve}>
-                🗑 Dissolve
-              </button>
-            </>
+          <button className="btn-switch-group" onClick={onSwitchGroup}>
+            ⇄ Groups
+          </button>
+          {onDissolve && (
+            <button className="btn-dissolve" onClick={onDissolve}>
+              🗑 Dissolve
+            </button>
           )}
         </div>
       </div>
@@ -2179,10 +2207,9 @@ function AppScreen({
           setMembers={setMembers}
           token={token}
           groupId={groupId}
-          admins={admins}
-          setAdmins={setAdmins}
-          currentAdminEmail={currentAdminEmail}
-          isViewer={isViewer}
+          myRole={myRole}
+          joinCode={joinCode}
+          currentEmail={currentAdminEmail}
           expenses={expenses}
           payments={payments}
         />
@@ -2219,14 +2246,14 @@ function AppScreen({
 export default function App() {
   const [screen, setScreen] = useState("login");
   const [token, setToken] = useState(null);
-  const [role, setRole] = useState("admin");
+  const [currentEmail, setCurrentEmail] = useState("");
   const [groupId, setGroupId] = useState(null);
   const [groupName, setGroupName] = useState("");
+  const [myRole, setMyRole] = useState("viewer"); // role in current group
+  const [joinCode, setJoinCode] = useState(null);
   const [members, setMembers] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [admins, setAdmins] = useState([]);
-  const [currentAdminEmail, setCurrentAdminEmail] = useState("");
 
   // Inject global CSS once
   useEffect(() => {
@@ -2250,44 +2277,38 @@ export default function App() {
     };
   }, []);
 
-  async function afterLogin(tok, email, userRole, viewerGroupId) {
+  async function afterLogin(tok, email) {
     setToken(tok);
-    setRole(userRole);
-    setCurrentAdminEmail(email || "");
-
-    try {
-      if (userRole === "viewer") {
-        const [dashboard] = await Promise.all([
-          apiFetch("GET", "/dashboard?groupId=" + viewerGroupId, null, tok),
-        ]);
-        setGroupId(viewerGroupId);
-        setGroupName("Group");
-        setMembers(dashboard.members);
-        setExpenses(dashboard.expenses);
-        setPayments(dashboard.payments || []);
-        setScreen("app");
-      } else {
-        setScreen("groups");
-      }
-    } catch (e) {
-      alert("Failed to load data: " + e.message);
-    }
+    setCurrentEmail(email || "");
+    setScreen("groups");
   }
 
-  async function selectGroup(gid, gname, isNew) {
+  async function selectGroup(gid, gname, role, isNew) {
     setGroupId(gid);
     setGroupName(gname);
+    setMyRole(role);
     try {
-      const [dashboard, adminData] = await Promise.all([
-        apiFetch("GET", "/dashboard?groupId=" + gid, null, token),
-        apiFetch("GET", "/admins", null, token),
-      ]);
+      const dashboard = await apiFetch(
+        "GET",
+        "/dashboard?groupId=" + gid,
+        null,
+        token,
+      );
       setMembers(dashboard.members);
       setExpenses(dashboard.expenses);
       setPayments(dashboard.payments || []);
-      setAdmins(adminData.admins || []);
+      setMyRole(dashboard.myRole || role);
 
-      if (dashboard.members.length >= 2) {
+      // Fetch join code if owner/coadmin
+      if (dashboard.myRole === "owner" || dashboard.myRole === "coadmin") {
+        const groups = await apiFetch("GET", "/groups", null, token);
+        const g = (groups.groups || []).find((x) => x.id === gid);
+        setJoinCode(g?.joinCode || null);
+      } else {
+        setJoinCode(null);
+      }
+
+      if (dashboard.members.length >= 2 || dashboard.myRole === "viewer") {
         setScreen("app");
       } else {
         setScreen("setup");
@@ -2329,8 +2350,6 @@ export default function App() {
     }
   }
 
-  const isViewer = role === "viewer";
-
   if (screen === "login") return <LoginScreen onLogin={afterLogin} />;
   if (screen === "groups")
     return <GroupSelectorScreen token={token} onSelectGroup={selectGroup} />;
@@ -2356,12 +2375,12 @@ export default function App() {
       token={token}
       groupId={groupId}
       groupName={groupName}
-      onDissolve={dissolveGroup}
+      onDissolve={myRole === "owner" ? dissolveGroup : null}
       onSwitchGroup={() => setScreen("groups")}
-      admins={admins}
-      setAdmins={setAdmins}
-      currentAdminEmail={currentAdminEmail}
-      isViewer={isViewer}
+      myRole={myRole}
+      joinCode={joinCode}
+      currentEmail={currentEmail}
+      isViewer={myRole === "viewer"}
     />
   );
 }
