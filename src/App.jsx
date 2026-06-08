@@ -533,19 +533,6 @@ function LoginScreen({ onLogin }) {
   const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    apiFetch("GET", "/auth/exists")
-      .then(({ exists }) => {
-        // Default to login if any admin exists; registration still accessible via toggle
-        if (!exists) setAuthMode("register");
-      })
-      .catch(() =>
-        setErrMsg(
-          "Cannot connect to server. Make sure server.js is running on port 3000.",
-        ),
-      );
-  }, []);
-
   async function doAuth() {
     setErrMsg("");
     setSuccessMsg("");
